@@ -7,8 +7,7 @@ if [ "$#" -eq 0 ] ; then
 fi
 
 checked=()
-valid_links=()
-broken_links=()
+output_links=()
 
 root_url="$1"
 
@@ -19,13 +18,24 @@ if [[ $root_url =~ $url_regex ]]; then
 	baseurl="${BASH_REMATCH[1]}"
 	label="${BASH_REMATCH[2]}"
 fi
+filename="blr-$label.html"
+debugfile="blr-$label-debug-log"
+if [ -e ./"$filename" ]; then
+	rm -f $filename
+fi
 
-touch "broken-link-report-$label"
+if [ -e ./"$debugfile" ]; then
+	rm -f $debugfile
+fi
 
-echo "Target Url: $root_url" >> "broken-link-report-$label"
+touch $filename
+touch $debugfile
 
-echo "$baseurl" >> "broken-link-report-$label"
-
+echo "Root Url: $root_url" >> $debugfile
+tmp=${baseurl%/*}
+echo "Base Url: $tmp" >> $debugfile
+echo "Label Url: $label" >> $debugfile 
+echo "================================" >> $debugfile
 get_anchor_tags() {
 
 	local links=$(curl -s "$url" |
@@ -66,21 +76,29 @@ checks_links() {
 		# We haven't seen this link before, so we can check it. 
 		if [ $found == false ]; then
 
-			images=`get_image_tags $link`
 
+
+			images=`get_image_tags $link`
+			echo "" >> $debugfile
+			echo "$images" >> $debugfile
+			echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~" >> $debugfile
 			while read -r image; do
+				echo "$image" >> $debugfile
 				if [[ $image =~ $url_regex ]]; then
-					
+					# We're only interested in internally-linking images. 
 					if [[ ${BASH_REMATCH[1]} == "" ]]; then
+						image_url="$tmp$image"
 						
-						image_url="$baseurl$image"
 						status=$(curl -o /dev/null -s -w "%{http_code}\n" "$image_url")
 						
 						if [[ "$status" != "404" ]]; then
-
-							valid_links+=("$image_url - IMAGE : $status")
+							html="<li><span class='type'>IMAGE</span> <span class='link'>$image_url</span> <span class='status'>$status</span> <span class='result'>PASS</span></li>"
+							#text="IMAGE $image_url $status PASS"
+							#output_links+=("$text")
+							output_links+=("$html")
 						else
-							broken_links+=("$baseurl$image - IMAGE : $status")
+							html="<li><span class='type'>IMAGE</span> <span class='link'>$image_url</span> <span class='status'>$status</span> <span class='result-bad'>BAD</span></li>"
+							output_links+=("$html")
 						fi
 
 
@@ -96,32 +114,48 @@ checks_links() {
 
 			if [[ "$status" != "404" ]]; then
 				#echo "$link is valid"
-				valid_links+=("$link - LINK : $status")
+				html="<li><span class='type'>LINK</span><span class='link'>$link</span><span class='status'>$status</span><span class='result'>PASS</span></li>"
+				link_text="LINK $link $status PASS"
+				output_links+=("$html")
 				# If we're looking at an internal link, lets get all ITS links. 
 				if echo "$link" | grep -q "$root_url"; then
 					checks_links "$link"
 				fi
 			else
-				broken_links+=("$link")
+				html="<li><span class='type'>LINK</span><span class='link'>$link</span><span class='status'>$status</span><span class='result-bad'>BAD</span></li>"
+				output_links+=("$html")
 			fi
 		fi
 		
 	done <<< "$links"
 
 }
+echo "<!DOCTYPE html>" >> $filename
+echo "<html>" >> $filename
 
+echo "<head><meta charset='UTF-8'>" >> $filename
+
+echo "<style>" >> $filename
+echo ".result {color: green;} span {margin:0 7px;} .result-bad {color: red;} ul {list-style-type: none;}" >> $filename
+echo "#header {color: red;}" >> $filename
+echo "</style>" >> $filename
+echo "</head>" >> $filename
+echo "</body>" >> $filename
+echo "<div id='header'><h1>Boston University</h1></div>" >> $filename
+echo "<div><ul>" >> $filename
 
 checks_links "$root_url"
 
 
-for i in "${valid_links[@]}"; do
 
-	echo "${i} - PASS" >> "broken-link-report-$label"
+for i in "${output_links[@]}"; do
+
+	echo "${i}" >> $filename
 done
 
-for i in "${broken_links[@]}"; do
+echo "</ul></div>" >> $filename
+echo "</body>" >> $filename
 
-	echo "${i} - BAD" >> "broken-link-report-$label"
-done
+wkhtmltopdf $filename "$label.pdf"
 
 exit 0
